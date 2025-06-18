@@ -617,7 +617,7 @@ export default function AdminPanel() {
                       <h3 className="font-semibold mb-1">{template.name}</h3>
                       <p className="text-sm text-gray-600 capitalize mb-2">{template.category.replace("-", " ")}</p>
                       <p className="text-xs text-gray-500 mb-2">Downloads: {template.downloads}</p>
-                      {template.tags.length > 0 && (
+                      {(template.tags || []).length > 0 &&(
                         <div className="flex flex-wrap gap-1 mb-3">
                           {template.tags.map((tag, index) => (
                             <span key={index} className="text-xs bg-gray-100 px-2 py-1 rounded">
