@@ -1,7 +1,5 @@
 "use client";
 
-import type React from "react";
-
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,35 +11,41 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 
+interface AuthFormData {
+  email: string;
+  password: string;
+  confirmPassword?: string;
+  fullName?: string;
+}
+
 export default function AuthPage() {
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingForgotPassword, setIsLoadingForgotPassword] = useState(false);
+  const [isLoadingResend, setIsLoadingResend] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "">("");
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [signInData, setSignInData] = useState({
+  const [signInData, setSignInData] = useState<AuthFormData>({
     email: "",
     password: "",
   });
 
-  const [signUpData, setSignUpData] = useState({
+  const [signUpData, setSignUpData] = useState<AuthFormData>({
     email: "",
     password: "",
     confirmPassword: "",
     fullName: "",
   });
 
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
   useEffect(() => {
-    // Handle email verification and error states
     handleAuthCallback();
-    // Check if user is already logged in
     checkUser();
   }, []);
-
-
-  // ! handleAuthCallback------------------------------------------------------------------------------------------------
 
   const handleAuthCallback = async () => {
     const error = searchParams.get("error");
@@ -49,9 +53,7 @@ export default function AuthPage() {
 
     if (error) {
       if (error === "access_denied" && errorDescription?.includes("expired")) {
-        setMessage(
-          "Email verification link has expired. Please request a new verification email."
-        );
+        setMessage("Email verification link has expired. Please request a new verification email.");
         setMessageType("error");
       } else {
         setMessage(errorDescription || "An authentication error occurred");
@@ -60,37 +62,25 @@ export default function AuthPage() {
       return;
     }
 
-    // * Handle successful email verification
-    const { data, error: sessionError } = await supabase.auth.getSession();
+    const { data: { session } } = await supabase.auth.getSession();
 
-    if (data.session && !sessionError) {
-      setMessage("Email verified successfully!");
-      setMessageType("success");
-
-      // * Check if user is admin and redirect accordingly
+    if (session) {
       const { data: profile } = await supabase
         .from("profiles")
         .select("is_admin")
-        .eq("id", data.session.user.id)
+        .eq("id", session.user.id)
         .single();
 
       if (profile?.is_admin) {
-        setTimeout(() => router.push("/admin"), 1000);
-      } else {
-        setTimeout(() => router.push("/"), 1000);
+        router.push("/admin");
       }
     }
   };
 
-  // ! handlecheckuser function -------------------------------------------------------------------------------
-
   const checkUser = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (user && user.email_confirmed_at) {
-      // Check if user is admin
+    if (user) {
       const { data: profile } = await supabase
         .from("profiles")
         .select("is_admin")
@@ -98,14 +88,10 @@ export default function AuthPage() {
         .single();
 
       if (profile?.is_admin) {
-        router.push("/admin");
-      } else {
-        router.push("/");
+        router.push("/auth");
       }
     }
   };
-
-  // ! handlesignin function -------------------------------------------------------------------
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,127 +104,124 @@ export default function AuthPage() {
         password: signInData.password,
       });
 
-      if (error) throw error;
-
-      if (data.user) {
-        // Check if email is confirmed
-        if (!data.user.email_confirmed_at) {
-          setMessage(
-            "Please verify your email address before signing in. Check your inbox for a verification link."
-          );
-          setMessageType("error");
-          await supabase.auth.signOut();
-          return;
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          throw new Error("Invalid email or password");
         }
-
-        // ! no neeed this checking admin is there ---------------------------------------------------------------------------------
-
-        // Check if user is admin
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("is_admin, full_name")
-          .eq("id", data.user.id)
-          .single();
-
-        if (profileError) {
-          // Profile doesn't exist, create one
-          const { error: insertError } = await supabase
-            .from("profiles")
-            .insert({
-              id: data.user.id,
-              email: data.user.email!,
-              full_name: data.user.user_metadata?.full_name || null,
-              is_admin: false,
-            });
-
-          if (insertError) throw insertError;
-
-          setMessage(
-            "Account created successfully, but admin access is required for this page."
-          );
-          setMessageType("error");
-          return;
-        }
-
-        if (profile?.is_admin) {
-          setMessage("Welcome back, Admin!");
-          setMessageType("success");
-          setTimeout(() => {
-            router.push("/admin");
-          }, 1000);
-        } else {
-          setMessage("Access denied. Admin privileges required.");
-          setMessageType("error");
-          await supabase.auth.signOut();
-        }
+        throw error;
       }
+
+      if (data.user && !data.user.email_confirmed_at && !data.user.confirmed_at) {
+        setMessage("Please verify your email address before signing in.");
+        setMessageType("error");
+        await supabase.auth.signOut();
+        return;
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("is_admin")
+        .eq("id", data.user.id)
+        .single();
+
+      if (!profile?.is_admin) {
+        setMessage("Admin privileges required");
+        setMessageType("error");
+        await supabase.auth.signOut();
+        return;
+      }
+
+      setMessage("Sign in successful! Redirecting...");
+      setMessageType("success");
+      router.push("/admin");
+      
     } catch (error: any) {
-      setMessage(error.message || "An error occurred during sign in");
+      setMessage(error.message || "Sign in failed");
       setMessageType("error");
     } finally {
       setIsLoading(false);
     }
   };
 
-  // ! handleSignUp function ------------------------------------------------------------------------------------------------------
+ const handleSignUp = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setIsLoading(true);
+  setMessage("");
 
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setMessage("");
+  if (signUpData.password !== signUpData.confirmPassword) {
+    setMessage("Passwords do not match");
+    setMessageType("error");
+    setIsLoading(false);
+    return;
+  }
 
-    if (signUpData.password !== signUpData.confirmPassword) {
-      setMessage("Passwords do not match");
-      setMessageType("error");
-      setIsLoading(false);
-      return;
-    }
+  if (signUpData.password.length < 8) {
+    setMessage("Password must be at least 8 characters long");
+    setMessageType("error");
+    setIsLoading(false);
+    return;
+  }
 
-    if (signUpData.password.length < 6) {
-      setMessage("Password must be at least 6 characters long");
-      setMessageType("error");
-      setIsLoading(false);
-      return;
-    }
+  if (!/[A-Z]/.test(signUpData.password)) {
+    setMessage("Password must contain at least one uppercase letter");
+    setMessageType("error");
+    setIsLoading(false);
+    return;
+  }
 
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: signUpData.email,
-        password: signUpData.password,
-        options: {
-          data: {
-            full_name: signUpData.fullName,
-          },
-          emailRedirectTo: `${window.location.origin}/auth`,
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email: signUpData.email,
+      password: signUpData.password,
+      options: {
+        data: {
+          full_name: signUpData.fullName,
         },
-      });
+        emailRedirectTo: `${origin}/auth`,
+      },
+    });
 
-      if (error) throw error;
-
-      console.log({data,error})
-      if (data.user) {
-        setMessage(
-          "Account created successfully! Please check your email for verification. After verification, contact an administrator to request admin access."
-        );
-        setMessageType("success");
-
-        // Reset form
-        setSignUpData({
-          email: "",
-          password: "",
-          confirmPassword: "",
-          fullName: "",
-        });
+    if (error) {
+      if (error.message.includes('already registered')) {
+        throw new Error("Email already registered. Please sign in instead.");
       }
-    } catch (error: any) {
-      setMessage(error.message || "An error occurred during sign up");
-      setMessageType("error");
-    } finally {
-      setIsLoading(false);
+      throw error;
     }
-  };
 
-    // ! handleForgotPassword ------------------------------------------------------------------------------------------
+    if (data.user) {
+      // Update the user's profile to set is_admin to true
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: data.user.id,
+          full_name: signUpData.fullName,
+          email: signUpData.email,
+          is_admin: true, // Set admin role here
+          created_at: new Date().toISOString(),
+          // updated_at: new Date().toISOString(),
+        });
+
+      if (profileError) throw profileError;
+
+      setMessage(
+        "Admin account created successfully! Please check your email for verification."
+      );
+      setMessageType("success");
+
+      setSignUpData({
+        email: "",
+        password: "",
+        confirmPassword: "",
+        fullName: "",
+      });
+    }
+  } catch (error: any) {
+    setMessage(error.message || "An error occurred during sign up");
+    setMessageType("error");
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const handleForgotPassword = async () => {
     if (!signInData.email) {
@@ -247,12 +230,12 @@ export default function AuthPage() {
       return;
     }
 
-    setIsLoading(true);
+    setIsLoadingForgotPassword(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(
         signInData.email,
         {
-          redirectTo: `${window.location.origin}/auth/reset-password`,
+          redirectTo: `${origin}/auth/reset-password`,
         }
       );
 
@@ -264,11 +247,9 @@ export default function AuthPage() {
       setMessage(error.message || "An error occurred");
       setMessageType("error");
     } finally {
-      setIsLoading(false);
+      setIsLoadingForgotPassword(false);
     }
   };
-
- // !handle resendVerfication -----------------------------------------------------------------------------------------------------------
 
   const handleResendVerification = async () => {
     if (!signInData.email) {
@@ -277,13 +258,13 @@ export default function AuthPage() {
       return;
     }
 
-    setIsLoading(true);
+    setIsLoadingResend(true);
     try {
       const { error } = await supabase.auth.resend({
         type: "signup",
         email: signInData.email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth`,
+          emailRedirectTo: `${origin}/auth`,
         },
       });
 
@@ -295,14 +276,13 @@ export default function AuthPage() {
       setMessage(error.message || "An error occurred");
       setMessageType("error");
     } finally {
-      setIsLoading(false);
+      setIsLoadingResend(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <div className="container mx-auto px-4 py-8">
-        {/* Header */}
         <div className="flex items-center mb-8">
           <Link href="/">
             <Button variant="ghost" className="mr-4">
@@ -410,9 +390,9 @@ export default function AuthPage() {
                         variant="ghost"
                         className="w-full text-sm"
                         onClick={handleForgotPassword}
-                        disabled={isLoading}
+                        disabled={isLoadingForgotPassword}
                       >
-                        Forgot Password?
+                        {isLoadingForgotPassword ? "Sending..." : "Forgot Password?"}
                       </Button>
 
                       <Button
@@ -420,9 +400,9 @@ export default function AuthPage() {
                         variant="ghost"
                         className="w-full text-sm"
                         onClick={handleResendVerification}
-                        disabled={isLoading}
+                        disabled={isLoadingResend}
                       >
-                        Resend Verification Email
+                        {isLoadingResend ? "Sending..." : "Resend Verification Email"}
                       </Button>
                     </div>
                   </form>
@@ -477,7 +457,7 @@ export default function AuthPage() {
                               password: e.target.value,
                             })
                           }
-                          placeholder="At least 6 characters"
+                          placeholder="At least 8 characters with uppercase"
                           required
                         />
                         <Button
@@ -536,7 +516,6 @@ export default function AuthPage() {
             </CardContent>
           </Card>
 
-          {/* Demo Credentials */}
           <Card className="mt-6 bg-gray-50">
             <CardContent className="p-4">
               <h3 className="font-medium text-gray-800 mb-2">Demo Access</h3>
