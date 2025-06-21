@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ArrowLeft, Eye, EyeOff, Shield } from "lucide-react"
 import Link from "next/link"
-import { supabase } from "@/lib/supabase"
+import  supabase  from "@/lib/supabase/clients"
 import { useRouter } from "next/navigation"
+
 
 export default function ResetPasswordPage() {
   const [isLoading, setIsLoading] = useState(false)

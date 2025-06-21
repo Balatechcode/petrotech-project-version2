@@ -6,10 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Eye, EyeOff, Shield } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Shield, Mail, Key, User, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 interface AuthFormData {
   email: string;
@@ -19,14 +19,19 @@ interface AuthFormData {
 }
 
 export default function AuthPage() {
+  const [activeTab, setActiveTab] = useState("signin");
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingForgotPassword, setIsLoadingForgotPassword] = useState(false);
   const [isLoadingResend, setIsLoadingResend] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "">("");
+  const [passwordStrength, setPasswordStrength] = useState(0);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  
   const router = useRouter();
   const searchParams = useSearchParams();
+  const supabase = createClientComponentClient();
 
   const [signInData, setSignInData] = useState<AuthFormData>({
     email: "",
@@ -40,57 +45,61 @@ export default function AuthPage() {
     fullName: "",
   });
 
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        console.log("Checking auth status:", user);
+
+        if (user) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("is_admin")
+            .eq("id", user.id)
+            .single();
+
+          if (profile?.is_admin) {
+            router.push("/admin");
+            return;
+          }
+        }
+      } catch (error) {
+        console.error("Auth check error:", error);
+      } finally {
+        setIsCheckingAuth(false);
+      }
+    };
+
+    checkAuth();
+  }, [router, supabase]);
 
   useEffect(() => {
-    handleAuthCallback();
-    checkUser();
-  }, []);
-
-  const handleAuthCallback = async () => {
     const error = searchParams.get("error");
     const errorDescription = searchParams.get("error_description");
 
-    if (error) {
-      if (error === "access_denied" && errorDescription?.includes("expired")) {
-        setMessage("Email verification link has expired. Please request a new verification email.");
-        setMessageType("error");
-      } else {
-        setMessage(errorDescription || "An authentication error occurred");
-        setMessageType("error");
-      }
-      return;
+    if (error === "access_denied" && errorDescription?.includes("expired")) {
+      setMessage("Email verification link has expired. Please request a new verification email.");
+      setMessageType("error");
+    } else if (error) {
+      setMessage(errorDescription || "An authentication error occurred");
+      setMessageType("error");
     }
+  }, [searchParams]);
 
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (session) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("is_admin")
-        .eq("id", session.user.id)
-        .single();
-
-      if (profile?.is_admin) {
-        router.push("/admin");
-      }
+  useEffect(() => {
+    if (signUpData.password) {
+      calculatePasswordStrength(signUpData.password);
     }
-  };
+  }, [signUpData.password]);
 
-  const checkUser = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-
-    if (user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("is_admin")
-        .eq("id", user.id)
-        .single();
-
-      if (profile?.is_admin) {
-        router.push("/auth");
-      }
-    }
+  const calculatePasswordStrength = (password: string) => {
+    let strength = 0;
+    if (password.length >= 8) strength += 1;
+    if (/[A-Z]/.test(password)) strength += 1;
+    if (/[0-9]/.test(password)) strength += 1;
+    if (/[^A-Za-z0-9]/.test(password)) strength += 1;
+    setPasswordStrength(strength);
   };
 
   const handleSignIn = async (e: React.FormEvent) => {
@@ -111,7 +120,7 @@ export default function AuthPage() {
         throw error;
       }
 
-      if (data.user && !data.user.email_confirmed_at && !data.user.confirmed_at) {
+      if (data.user && !data.user.email_confirmed_at) {
         setMessage("Please verify your email address before signing in.");
         setMessageType("error");
         await supabase.auth.signOut();
@@ -131,10 +140,7 @@ export default function AuthPage() {
         return;
       }
 
-      setMessage("Sign in successful! Redirecting...");
-      setMessageType("success");
       router.push("/admin");
-      
     } catch (error: any) {
       setMessage(error.message || "Sign in failed");
       setMessageType("error");
@@ -143,85 +149,73 @@ export default function AuthPage() {
     }
   };
 
- const handleSignUp = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setIsLoading(true);
-  setMessage("");
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setMessage("");
 
-  if (signUpData.password !== signUpData.confirmPassword) {
-    setMessage("Passwords do not match");
-    setMessageType("error");
-    setIsLoading(false);
-    return;
-  }
+    if (signUpData.password !== signUpData.confirmPassword) {
+      setMessage("Passwords do not match");
+      setMessageType("error");
+      setIsLoading(false);
+      return;
+    }
 
-  if (signUpData.password.length < 8) {
-    setMessage("Password must be at least 8 characters long");
-    setMessageType("error");
-    setIsLoading(false);
-    return;
-  }
+    if (passwordStrength < 3) {
+      setMessage("Password must be stronger (at least 3/4 strength)");
+      setMessageType("error");
+      setIsLoading(false);
+      return;
+    }
 
-  if (!/[A-Z]/.test(signUpData.password)) {
-    setMessage("Password must contain at least one uppercase letter");
-    setMessageType("error");
-    setIsLoading(false);
-    return;
-  }
-
-  try {
-    const { data, error } = await supabase.auth.signUp({
-      email: signUpData.email,
-      password: signUpData.password,
-      options: {
-        data: {
-          full_name: signUpData.fullName,
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: signUpData.email,
+        password: signUpData.password,
+        options: {
+          data: {
+            full_name: signUpData.fullName,
+          },
+          emailRedirectTo: `${window.location.origin}/auth`,
         },
-        emailRedirectTo: `${origin}/auth`,
-      },
-    });
-
-    if (error) {
-      if (error.message.includes('already registered')) {
-        throw new Error("Email already registered. Please sign in instead.");
-      }
-      throw error;
-    }
-
-    if (data.user) {
-      // Update the user's profile to set is_admin to true
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert({
-          id: data.user.id,
-          full_name: signUpData.fullName,
-          email: signUpData.email,
-          is_admin: true, // Set admin role here
-          created_at: new Date().toISOString(),
-          // updated_at: new Date().toISOString(),
-        });
-
-      if (profileError) throw profileError;
-
-      setMessage(
-        "Admin account created successfully! Please check your email for verification."
-      );
-      setMessageType("success");
-
-      setSignUpData({
-        email: "",
-        password: "",
-        confirmPassword: "",
-        fullName: "",
       });
+
+      if (error) {
+        if (error.message.includes('already registered')) {
+          throw new Error("Email already registered. Please sign in instead.");
+        }
+        throw error;
+      }
+
+      if (data.user) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .upsert({
+            id: data.user.id,
+            full_name: signUpData.fullName,
+            email: signUpData.email,
+            is_admin: true,
+          });
+
+        if (profileError) throw profileError;
+
+        setMessage("Admin account created! Check your email for verification.");
+        setMessageType("success");
+        setSignUpData({
+          email: "",
+          password: "",
+          confirmPassword: "",
+          fullName: "",
+        });
+        setActiveTab("signin");
+      }
+    } catch (error: any) {
+      setMessage(error.message || "An error occurred during sign up");
+      setMessageType("error");
+    } finally {
+      setIsLoading(false);
     }
-  } catch (error: any) {
-    setMessage(error.message || "An error occurred during sign up");
-    setMessageType("error");
-  } finally {
-    setIsLoading(false);
-  }
-};
+  };
 
   const handleForgotPassword = async () => {
     if (!signInData.email) {
@@ -235,7 +229,7 @@ export default function AuthPage() {
       const { error } = await supabase.auth.resetPasswordForEmail(
         signInData.email,
         {
-          redirectTo: `${origin}/auth/reset-password`,
+          redirectTo: `${window.location.origin}/auth/reset-password`,
         }
       );
 
@@ -264,7 +258,7 @@ export default function AuthPage() {
         type: "signup",
         email: signInData.email,
         options: {
-          emailRedirectTo: `${origin}/auth`,
+          emailRedirectTo: `${window.location.origin}/auth`,
         },
       });
 
@@ -279,6 +273,41 @@ export default function AuthPage() {
       setIsLoadingResend(false);
     }
   };
+
+  const PasswordStrengthMeter = () => {
+    if (!signUpData.password) return null;
+    
+    return (
+      <div className="mt-2">
+        <div className="flex gap-1 mb-1">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className={`h-1 flex-1 rounded-sm ${
+                passwordStrength >= i ? 
+                  i >= 3 ? "bg-green-500" : 
+                  i === 2 ? "bg-yellow-500" : "bg-red-500" 
+                : "bg-gray-200"
+              }`}
+            />
+          ))}
+        </div>
+        <p className="text-xs text-gray-600">
+          {passwordStrength < 2 ? "Weak" : 
+           passwordStrength < 3 ? "Moderate" : 
+           passwordStrength < 4 ? "Strong" : "Very Strong"}
+        </p>
+      </div>
+    );
+  };
+
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
@@ -319,7 +348,12 @@ export default function AuthPage() {
                 </div>
               )}
 
-              <Tabs defaultValue="signin" className="w-full">
+              <Tabs 
+                defaultValue="signin" 
+                className="w-full"
+                value={activeTab}
+                onValueChange={setActiveTab}
+              >
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="signin">Sign In</TabsTrigger>
                   <TabsTrigger value="signup">Sign Up</TabsTrigger>
@@ -329,19 +363,22 @@ export default function AuthPage() {
                   <form onSubmit={handleSignIn} className="space-y-4">
                     <div>
                       <Label htmlFor="signin-email">Email</Label>
-                      <Input
-                        id="signin-email"
-                        type="email"
-                        value={signInData.email}
-                        onChange={(e) =>
-                          setSignInData({
-                            ...signInData,
-                            email: e.target.value,
-                          })
-                        }
-                        placeholder="admin@example.com"
-                        required
-                      />
+                      <div className="relative">
+                        <Input
+                          id="signin-email"
+                          type="email"
+                          value={signInData.email}
+                          onChange={(e) =>
+                            setSignInData({
+                              ...signInData,
+                              email: e.target.value,
+                            })
+                          }
+                          placeholder="admin@example.com"
+                          required
+                        />
+                        <Mail className="absolute right-3 top-3 h-4 w-4 text-gray-400" />
+                      </div>
                     </div>
 
                     <div>
@@ -360,6 +397,7 @@ export default function AuthPage() {
                           placeholder="Enter your password"
                           required
                         />
+                        <Key className="absolute right-10 top-3 h-4 w-4 text-gray-400" />
                         <Button
                           type="button"
                           variant="ghost"
@@ -381,7 +419,12 @@ export default function AuthPage() {
                       className="w-full"
                       disabled={isLoading}
                     >
-                      {isLoading ? "Signing In..." : "Sign In"}
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Signing In...
+                        </>
+                      ) : "Sign In"}
                     </Button>
 
                     <div className="flex flex-col gap-2">
@@ -392,7 +435,12 @@ export default function AuthPage() {
                         onClick={handleForgotPassword}
                         disabled={isLoadingForgotPassword}
                       >
-                        {isLoadingForgotPassword ? "Sending..." : "Forgot Password?"}
+                        {isLoadingForgotPassword ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Sending...
+                          </>
+                        ) : "Forgot Password?"}
                       </Button>
 
                       <Button
@@ -402,7 +450,12 @@ export default function AuthPage() {
                         onClick={handleResendVerification}
                         disabled={isLoadingResend}
                       >
-                        {isLoadingResend ? "Sending..." : "Resend Verification Email"}
+                        {isLoadingResend ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Sending...
+                          </>
+                        ) : "Resend Verification Email"}
                       </Button>
                     </div>
                   </form>
@@ -412,36 +465,42 @@ export default function AuthPage() {
                   <form onSubmit={handleSignUp} className="space-y-4">
                     <div>
                       <Label htmlFor="signup-name">Full Name</Label>
-                      <Input
-                        id="signup-name"
-                        type="text"
-                        value={signUpData.fullName}
-                        onChange={(e) =>
-                          setSignUpData({
-                            ...signUpData,
-                            fullName: e.target.value,
-                          })
-                        }
-                        placeholder="John Doe"
-                        required
-                      />
+                      <div className="relative">
+                        <Input
+                          id="signup-name"
+                          type="text"
+                          value={signUpData.fullName}
+                          onChange={(e) =>
+                            setSignUpData({
+                              ...signUpData,
+                              fullName: e.target.value,
+                            })
+                          }
+                          placeholder="John Doe"
+                          required
+                        />
+                        <User className="absolute right-3 top-3 h-4 w-4 text-gray-400" />
+                      </div>
                     </div>
 
                     <div>
                       <Label htmlFor="signup-email">Email</Label>
-                      <Input
-                        id="signup-email"
-                        type="email"
-                        value={signUpData.email}
-                        onChange={(e) =>
-                          setSignUpData({
-                            ...signUpData,
-                            email: e.target.value,
-                          })
-                        }
-                        placeholder="john@example.com"
-                        required
-                      />
+                      <div className="relative">
+                        <Input
+                          id="signup-email"
+                          type="email"
+                          value={signUpData.email}
+                          onChange={(e) =>
+                            setSignUpData({
+                              ...signUpData,
+                              email: e.target.value,
+                            })
+                          }
+                          placeholder="john@example.com"
+                          required
+                        />
+                        <Mail className="absolute right-3 top-3 h-4 w-4 text-gray-400" />
+                      </div>
                     </div>
 
                     <div>
@@ -460,6 +519,7 @@ export default function AuthPage() {
                           placeholder="At least 8 characters with uppercase"
                           required
                         />
+                        <Key className="absolute right-10 top-3 h-4 w-4 text-gray-400" />
                         <Button
                           type="button"
                           variant="ghost"
@@ -474,41 +534,58 @@ export default function AuthPage() {
                           )}
                         </Button>
                       </div>
+                      <PasswordStrengthMeter />
+                      <div className="text-xs text-gray-500 mt-1">
+                        Password must contain:
+                        <ul className="list-disc pl-5">
+                          <li>At least 8 characters</li>
+                          <li>One uppercase letter</li>
+                          <li>One number</li>
+                          <li>One special character</li>
+                        </ul>
+                      </div>
                     </div>
 
                     <div>
                       <Label htmlFor="signup-confirm-password">
                         Confirm Password
                       </Label>
-                      <Input
-                        id="signup-confirm-password"
-                        type={showPassword ? "text" : "password"}
-                        value={signUpData.confirmPassword}
-                        onChange={(e) =>
-                          setSignUpData({
-                            ...signUpData,
-                            confirmPassword: e.target.value,
-                          })
-                        }
-                        placeholder="Confirm your password"
-                        required
-                      />
+                      <div className="relative">
+                        <Input
+                          id="signup-confirm-password"
+                          type={showPassword ? "text" : "password"}
+                          value={signUpData.confirmPassword}
+                          onChange={(e) =>
+                            setSignUpData({
+                              ...signUpData,
+                              confirmPassword: e.target.value,
+                            })
+                          }
+                          placeholder="Confirm your password"
+                          required
+                        />
+                        <Key className="absolute right-3 top-3 h-4 w-4 text-gray-400" />
+                      </div>
                     </div>
 
                     <Button
                       type="submit"
                       className="w-full"
-                      disabled={isLoading}
+                      disabled={isLoading || passwordStrength < 3}
                     >
-                      {isLoading ? "Creating Account..." : "Create Account"}
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Creating Account...
+                        </>
+                      ) : "Create Account"}
                     </Button>
                   </form>
 
-                  <div className="text-center text-sm text-gray-600 mt-4 p-3 bg-yellow-50 rounded-md border border-yellow-200">
-                    <p className="font-medium text-yellow-800">Note:</p>
-                    <p className="text-yellow-700">
-                      After email verification, contact an administrator to
-                      request admin privileges.
+                  <div className="text-center text-sm text-gray-600 mt-4 p-3 bg-blue-50 rounded-md border border-blue-200">
+                    <p className="font-medium text-blue-800">Note:</p>
+                    <p className="text-blue-700">
+                      After email verification, your admin access will be granted automatically.
                     </p>
                   </div>
                 </TabsContent>
@@ -518,14 +595,16 @@ export default function AuthPage() {
 
           <Card className="mt-6 bg-gray-50">
             <CardContent className="p-4">
-              <h3 className="font-medium text-gray-800 mb-2">Demo Access</h3>
-              <div className="text-sm text-gray-600 space-y-1">
+              <h3 className="font-medium text-gray-800 mb-2">Security Information</h3>
+              <div className="text-sm text-gray-600 space-y-2">
                 <p>
-                  For testing purposes, create an account and I'll grant admin
-                  access manually.
+                  All accounts require email verification before access is granted.
+                </p>
+                <p>
+                  Admin privileges are automatically granted upon verification.
                 </p>
                 <p className="text-xs text-gray-500 mt-2">
-                  * Email verification is required for all new accounts.
+                  For security reasons, we log all admin access attempts.
                 </p>
               </div>
             </CardContent>
