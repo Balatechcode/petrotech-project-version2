@@ -439,7 +439,7 @@ export default function AdminPanelClient({ initialTemplates }: { initialTemplate
     setFormData({
       name: template.name,
       category: template.category,
-      description: template.description || "",
+      description: template || "",
       isPremium: template.is_premium,
       price: template.price.toString(),
       tags: template.tags?.join(", ") || "",
