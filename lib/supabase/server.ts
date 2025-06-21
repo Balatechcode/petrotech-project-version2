@@ -1,4 +1,4 @@
-// ✅ File: lib/supabase/server.ts
+// this new file
 
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
 import { cookies } from 'next/headers'
