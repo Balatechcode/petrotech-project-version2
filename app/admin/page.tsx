@@ -8,7 +8,7 @@ export default async function AdminPanel() {
   const supabase = createServerComponentClient({ cookies })
   const { data: { user } } = await supabase.auth.getUser()
 
-  if (user?.role == "admin") {
+  if (user?.role !== "admin") {
     redirect('/auth')
   }
 
